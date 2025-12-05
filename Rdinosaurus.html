@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Super Dinosaurus Extreme</title>
+
+<style>
+  body {
+    margin: 0;
+    background: #000;
+    overflow: hidden;
+    font-family: Arial, sans-serif;
+  }
+  canvas {
+    display: block;
+    margin: 0 auto;
+    border: 2px solid #333;
+  }
+  #ui {
+    text-align: center;
+    margin-top: 18px;
+    color: white;
+    user-select: none;
+  }
+  .menu-btn, .mode-btn, .skin-btn, .restart-btn {
+    cursor: pointer;
+    border-radius: 10px;
+    margin: 8px;
+    font-weight: bold;
+  }
+  .menu-btn {
+    background: #00cc66;
+    font-size: 24px;
+    padding: 12px 30px;
+  }
+  .mode-btn {
+    background: #0077ff;
+    font-size: 20px;
+    padding: 10px 25px;
+  }
+  .skin-btn {
+    background: #444;
+    border: 2px solid #fff;
+    font-size: 16px;
+    padding: 8px 14px;
+  }
+  .restart-btn {
+    background: #ff4444;
+    font-size: 22px;
+    padding: 10px 28px;
+    border: none;
+    color: white;
+  }
+</style>
+</head>
+
+<body>
+
+<div id="ui"></div>
+<canvas id="gameCanvas" width="920" height="300"></canvas>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+const ui = document.getElementById("ui");
+
+let gameStarted = false;
+let mode = "normal";
+let paused = false;
+let gameOver = false;
+let frame, score, highscore, speed, cycleTime;
+
+const dayDuration = 90*60;
+const nightDuration = 60*60;
+
+let dino, obstacles, clouds;
+
+let skins = [
+  { name:"Green Classic", color:"#A4FF8A", head:"#A4FF8A", glass:"#000" },
+  { name:"Blue Sport", color:"#4DA6FF", head:"#4DA6FF", glass:"#000" },
+  { name:"Red Power", color:"#FF4D4D", head:"#FF4D4D", glass:"#222" },
+  { name:"Rainbow", color:"#FF66FF", head:"#66FFFF", glass:"#333" },
+  { name:"Gold Royale", color:"#FFD700", head:"#FFD700", glass:"#000" }
+];
+let selectedSkin = 0;
+
+function resetGame() {
+  dino = { x:60, y:220, width:50, height:50, dy:0, gravity:.6, jumpPower:12, isJumping:false, legAnim:0 };
+  obstacles = [];
+  clouds = [];
+  for (let i=0;i<6;i++) clouds.push({ x:Math.random()*canvas.width, y:Math.random()*90+10 });
+  frame=0;
+  score=0;
+  speed=7;
+  cycleTime=0;
+  highscore = localStorage.getItem("highscore") || 0;
+  paused=false;
+  gameOver=false;
+}
+
+function isNight() { return cycleTime > dayDuration; }
+function resetCycle() { if(cycleTime>dayDuration+nightDuration) cycleTime=0; }
+
+function drawBackground() {
+  resetCycle();
+  cycleTime++;
+
+  ctx.fillStyle = isNight()? "#001530":"#8ED6FF";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  
+  clouds.forEach(c=>{
+    c.x -= .7;
+    if(c.x+80<0) c.x = canvas.width;
+    ctx.fillStyle = `rgba(255,255,255,${isNight()?0.4:0.9})`;
+    ctx.beginPath();
+    ctx.arc(c.x,c.y,20,0,Math.PI*2);
+    ctx.arc(c.x+25,c.y+10,20,0,Math.PI*2);
+    ctx.arc(c.x-20,c.y+10,20,0,Math.PI*2);
+    ctx.fill();
+  });
+
+  ctx.fillStyle="#333";
+  ctx.fillRect(0,260,canvas.width,40);
+}
+
+function drawDino() {
+  let skin = skins[selectedSkin];
+  ctx.fillStyle = skin.color;
+  ctx.fillRect(dino.x, dino.y, dino.width, dino.height);
+  ctx.fillStyle = skin.head;
+  ctx.fillRect(dino.x+35, dino.y-25, 35,35);
+  ctx.fillStyle = skin.glass;
+  ctx.fillRect(dino.x+45, dino.y-18,14,14);
+  ctx.fillRect(dino.x+63, dino.y-18,14,14);
+  ctx.fillRect(dino.x+58, dino.y-10,8,4);
+  ctx.fillStyle="#222";
+  if(!dino.isJumping) dino.legAnim = (frame%20<10)?0:8;
+  ctx.fillRect(dino.x+5, dino.y+40,10,10);
+  ctx.fillRect(dino.x+35, dino.y+40-dino.legAnim,10,10);
+}
+
+document.addEventListener("keydown", e=>{
+  if(e.code==="Space") jump();
+  if(e.code==="KeyP") togglePause();
+  if(gameOver && e.code==="Enter") restartButton();
+});
+canvas.addEventListener("touchstart", jump);
+
+function jump(){
+  if(!dino.isJumping && !gameOver && !paused){
+    dino.dy = -dino.jumpPower;
+    dino.isJumping = true;
+    soundJump();
+  }
+}
+
+function spawnObstacle(){
+  let type = Math.random() < (mode==="bird" ? 0.7:0.4) ? "bird":"cactus";
+  if(type==="cactus"){
+    let s = Math.random()*25+25;
+    obstacles.push({type,x:canvas.width,y:260-s,w:s,h:s});
+  }else{
+    obstacles.push({type,x:canvas.width,y:180,w:35,h:25});
+  }
+}
+
+canvas.addEventListener("click", e=>{
+  if (!gameStarted || gameOver) return;
+  let rect = canvas.getBoundingClientRect();
+  let x = e.clientX - rect.left;
+  let y = e.clientY - rect.top;
+  if (x > canvas.width - 50 && y < 50) togglePause();
+});
+
+function drawPauseButton(){
+  if (gameStarted && !gameOver){
+    ctx.fillStyle = "white";
+    ctx.font = "24px Arial";
+    ctx.fillText("⏸", canvas.width - 35, 30);
+  }
+}
+
+function togglePause() {
+  if (!gameStarted || gameOver) return;
+  paused = !paused;
+  if (!paused) {
+    ui.innerHTML = "";
+    update();
+  } else {
+    ui.innerHTML = `
+      <button class="restart-btn" onclick="restartButton()">🔁 Restart</button>
+      <button class="menu-btn" onclick="togglePause()">▶️ Resume</button>
+    `;
+  }
+}
+
+function update(){
+  if(paused || gameOver) return;
+  drawBackground();
+
+  dino.y += dino.dy;
+  if(dino.y + dino.height >= 260){
+    dino.y = 260 - dino.height;
+    dino.isJumping=false;
+  } else dino.dy += dino.gravity;
+
+  drawDino();
+
+  if(frame % Math.max(45,90-score/6)===0) spawnObstacle();
+  obstacles.forEach(o=>{
+    o.x -= speed;
+    ctx.fillStyle = o.type==="cactus"? "#013220":"#01190F";
+    ctx.fillRect(o.x,o.y,o.w,o.h);
+
+    if(
+      dino.x < o.x+o.w &&
+      dino.x+dino.width > o.x &&
+      dino.y < o.y+o.h &&
+      dino.y+dino.height > o.y
+    ){
+      gameOver = true;
+      soundDeath();
+      if(score>highscore){
+        highscore=score;
+        localStorage.setItem("highscore",highscore);
+      }
+      showRestartButton();
+    }
+  });
+  obstacles=obstacles.filter(o=>o.x+o.w>0);
+
+  frame++;
+  if(frame%6===0) score++;
+  speed+=0.002;
+
+  ctx.fillStyle="#fff";
+  ctx.font="20px Arial";
+  ctx.fillText(`Score: ${score} | Highscore: ${highscore}`,10,25);
+
+  drawPauseButton();
+
+  if(!gameOver) requestAnimationFrame(update);
+}
+
+function tone(freq,dur){
+  let a=new AudioContext();
+  let o=a.createOscillator(), g=a.createGain();
+  o.connect(g); g.connect(a.destination);
+  o.frequency.value=freq;
+  g.gain.setValueAtTime(.3,a.currentTime);
+  g.gain.exponentialRampToValueAtTime(.001,a.currentTime+dur);
+  o.start(a.currentTime); o.stop(a.currentTime+dur);
+}
+function soundJump(){ tone(450,.2); }
+function soundDeath(){ tone(110,.6); }
+
+function showMenu(){
+  ui.innerHTML = `
+    <div class="menu-btn" onclick="showSkinSelect()">PLAY</div><br>
+    <small>Pilih mode & skin sebelum bermain</small>
+  `;
+}
+function showSkinSelect(){
+  ui.innerHTML = `
+    <h3>Pilih Skin</h3>
+    ${skins.map((s,i)=>`<button class="skin-btn" onclick="setSkin(${i})">${s.name}</button>`).join("")}
+    <br><br><button class="menu-btn" onclick="showMode()">Lanjut</button>
+  `;
+}
+function setSkin(i){ selectedSkin=i; }
+
+function showMode(){
+  ui.innerHTML = `
+    <h3>Pilih Mode</h3>
+    <button class="mode-btn" onclick="startMode('normal')">Normal</button>
+    <button class="mode-btn" onclick="startMode('bird')">Bird Attack</button>
+  `;
+}
+
+function startMode(m){
+  ui.innerHTML = "";
+  mode=m;
+  gameStarted=true;
+  resetGame();
+  update();
+}
+
+function showRestartButton(){
+  ui.innerHTML = `
+    <button class="restart-btn" onclick="restartButton()">🔁 Restart</button>
+  `;
+}
+
+function restartButton(){
+  ui.innerHTML = "";
+  resetGame();
+  update();
+}
+
+showMenu();
+</script>
+
+</body>
+</html>
